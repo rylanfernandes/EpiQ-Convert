@@ -1,5 +1,7 @@
 # EpiQ Convert
 
+Originally developed by Benjamin Gregory, Timo Fuchs, and Andrej Singer at the MSE Department at Cornell University
+
 A small desktop app that turns raw CHESS QM2 area-detector scans into NeXus
 reciprocal-space maps, and merges those maps, without writing a config file.
 
