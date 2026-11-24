@@ -13,7 +13,7 @@ the same lab-frame Q map that `rsm_monitor` produces. There is no orientation
 Requires macOS, Python 3, and the Xcode command-line tools.
 
 ```bash
-git clone <this repo> ~/EpiQ-Convert
+git clone https://github.com/rylanfernandes/EpiQ-Convert.git ~/EpiQ-Convert
 cd ~/EpiQ-Convert
 ./setup.sh                      # installs EpiQ-Map from PyPI
 # or, with a local EpiQ-Map checkout:
