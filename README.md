@@ -10,19 +10,30 @@ the same lab-frame Q map that `rsm_monitor` produces. There is no orientation
 
 ## Install
 
-Requires macOS, Python 3, and the Xcode command-line tools.
+Requires Python 3.10 or newer.
+
+```bash
+pip install git+https://github.com/rylanfernandes/EpiQ-Convert.git
+```
+
+This also installs EpiQ-Map and PyQt6. Then open the app from any folder:
+
+```bash
+epiq-convert
+```
+
+To update, add `--upgrade` to the `pip install` line.
+
+### Desktop icon on a Mac (optional)
 
 ```bash
 git clone https://github.com/rylanfernandes/EpiQ-Convert.git ~/EpiQ-Convert
 cd ~/EpiQ-Convert
-./setup.sh                      # installs EpiQ-Map from PyPI
-# or, with a local EpiQ-Map checkout:
-./setup.sh /path/to/EpiQ-Map
+./setup.sh                      # or: ./setup.sh /path/to/EpiQ-Map
 ```
 
-`setup.sh` creates a Python environment in `~/.venvs/epiq-map`, installs
-EpiQ-Map into it, and puts **EpiQ Convert** on the Desktop. Keep this folder
-where it is afterwards; the Desktop icon points at it.
+`setup.sh` creates a Python environment in `~/.venvs/epiq-map`, installs this
+folder into it, and puts **EpiQ Convert** on the Desktop.
 
 ## Convert a scan
 
@@ -61,18 +72,19 @@ The second tab merges two or three converted maps with `combine_rsm.py`:
 All files must be on the same grid. The result is written next to file 1 as
 `..._scans_<a>_<b>_<c>_full_combined.nxs`.
 
-The script also runs on its own:
+The combine also runs without the app:
 
 ```bash
-python combine_rsm.py A.nxs B.nxs [C.nxs] -o combined.nxs
+epiq-combine A.nxs B.nxs [C.nxs] -o combined.nxs
 ```
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `epiq_convert.py` | The app (PyQt6) |
-| `combine_rsm.py` | Streaming combine of two or three maps |
-| `setup.sh` | Environment, EpiQ-Map install, Desktop icon |
+| `src/epiq_convert/app.py` | The app (PyQt6) |
+| `src/epiq_convert/combine_rsm.py` | Streaming combine of two or three maps |
+| `pyproject.toml` | Packaging for `pip install` |
+| `setup.sh` | Optional Mac Desktop icon |
 
-If the app does not open, see `~/Library/Logs/EpiQ-Convert.log`.
+If the Desktop icon does not open the app, see `~/Library/Logs/EpiQ-Convert.log`.

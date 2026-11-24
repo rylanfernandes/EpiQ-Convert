@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "epiq-convert"
+version = "0.1.0"
+description = "A small app to convert CHESS QM2 scans to NeXus maps with EpiQ-Map, and combine them"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "EpiQ-Map>=0.1.0",
+  "PyQt6>=6.5",
+  "h5py>=3",
+  "numpy>=1.23",
+  "scipy>=1.9",
+]
+
+[project.scripts]
+epiq-combine = "epiq_convert.cli:combine"
+
+[project.gui-scripts]
+epiq-convert = "epiq_convert.cli:convert"
+
+[project.urls]
+Source = "https://github.com/rylanfernandes/EpiQ-Convert"
+
+[tool.setuptools.packages.find]
+where = ["src"]
