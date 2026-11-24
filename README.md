@@ -114,7 +114,7 @@ A NeXus/HDF5 file with one `NXdata` group, `entry/data`:
 | Dataset | Meaning |
 |---|---|
 | `counts` | Normalised intensity on the grid (accumulated signal divided by coverage) |
-| `norm` | How many detector pixels landed in each voxel. `0` means the voxel was never measured |
+| `norm` | Coverage of each voxel, as accumulated by EpiQ-Map. `0` means the voxel was never measured |
 | `H`, `K`, `L` | The three axes. With no indexing these are lab-frame Q components in Å⁻¹, not Miller indices |
 
 The grid is 1000 × 1000 × 1000 and its range is set from the detector
