@@ -45,9 +45,6 @@ epiq-convert
 
 To update, add `--upgrade` to the `pip install` line.
 
-While the repository is private, `pip` needs GitHub credentials for an account
-that can read it.
-
 ### Desktop icon on a Mac (optional)
 
 ```bash
@@ -193,7 +190,6 @@ python -m epiq_map.hkl_convert.auto_rsm <output folder>/logs/BaRuO3_021.txt
 | A conversion finishes but the map looks empty | Check **Show details** for "overloaded frames skipped". Raise **Skip frames brighter than** if most images were skipped |
 | "Shape mismatch" when combining | The files were converted with different calibrations or grids |
 | The Mac Desktop icon does nothing | Read `~/Library/Logs/EpiQ-Convert.log`. If EpiQ-Map was installed from a folder on an external drive, connect the drive |
-| `pip install` asks for a username | The repository is private; sign in to GitHub first |
 
 On macOS, drives formatted as exFAT collect hidden `._name.cbf` files beside
 the real images. EpiQ-Map would read them as images and fail, so the app
