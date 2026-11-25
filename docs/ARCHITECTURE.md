@@ -4,231 +4,181 @@ How EpiQ Convert is put together. Read this before changing the code.
 
 ## The one idea
 
-The app does no reconstruction of its own. It collects inputs, writes the
-plain-text config that EpiQ-Map's `auto_rsm` expects, and runs
+The app does no processing of its own. It finds the files, shows the scans,
+writes the plain-text config that EpiQ-Map's `auto_rsm` expects, and runs
 
 ```
 python -u -m epiq_map.hkl_convert.auto_rsm <config>
 ```
 
-as a child process. Everything scientific about a conversion lives in
-EpiQ-Map. The Combine tab works the same way around `combine_rsm.py`.
-
-Running the work in a child process is what keeps the window responsive, makes
-Stop a simple `kill`, and guarantees the output matches what `rsm_monitor`
-would produce.
+as a child process. The combine runs `combine_rsm.py` the same way. Child
+processes keep the window responsive, make Stop a simple `kill`, and guarantee
+the output matches what `rsm_monitor` would produce.
 
 ## Files
 
 ```
 src/epiq_convert/
-  __init__.py      version string
-  __main__.py      python -m epiq_convert
-  cli.py           console entry points: convert() and combine()
-  app.py           the whole GUI plus the helper functions
+  beamtime.py      everything learned from the file system; no Qt
+  app.py           the window, the table and the job queue
   combine_rsm.py   combine script; runs top to bottom when executed
-pyproject.toml     packaging, dependencies, entry points
-setup.sh           optional: venv + macOS Desktop .app
+  cli.py           console entry points
+  __main__.py      python -m epiq_convert
+pyproject.toml     packaging
+setup.sh           optional macOS Desktop icon
 ```
 
-## app.py
+## beamtime.py
 
-Three layers, top to bottom in the file.
-
-### 1. Helper functions (no Qt)
+Pure functions, testable without a display.
 
 | Function | Job |
 |---|---|
-| `parse_scan_folder(path)` | `<Material>_<NNN>` → `(material, number)`, or `None`. Rejects names that would not round-trip through `f"{material}_{number:03d}"` |
-| `count_frames(path)` | Number of `.cbf` files, ignoring `._*` |
-| `hidden_cbf_files(path)` | The `._*.cbf` AppleDouble files to delete before a run |
-| `detect_sample_and_temperature(scan_dir, material)` | Reads the detector `.log` in the scan folder; see below |
-| `scan_motor(spec_path, n)` | Motor scanned in SPEC scan `n`, via `epiq_map.make_log_files.get_scan_motor` |
-| `output_path(...)` | Where `auto_rsm` will write the map |
+| `read_spec(path)` | One pass over the SPEC file → `{number: info}` |
+| `detect_layout(spec_path)` | Scan root, calibration and mask candidates, output folder, sibling SPEC files |
+| `aux_folder(folder)` | `.../id4b/...` → `.../id4baux/...` |
+| `find_scan_folders(root, material)` | Folders named `<material>_<NNN>` up to three levels down |
+| `load_scans(spec, root)` | The table rows: scans in the SPEC file that have a folder |
+| `output_state(output, rows)` | Which maps and combined files exist |
+| `inspect_frames(scan_dir)` | Image count and `._*.cbf` files |
 | `build_config(...)` | Text of the `auto_rsm` config |
-| `combined_name(paths)` | Output file name for a combine |
+| `converted_name(row)`, `combined_name(paths)` | Output file names |
 
-### 2. Widgets
+### Layout rules
 
-- **`PathPicker`**: an editable path box plus a **Choose…** button. `path()`
-  returns the last *committed* value; typing commits on Enter or focus-out
-  (`_typed`). It emits `changed` only when the committed value changes.
-- **`CombinePanel`**: the Combine tab. Self-contained, with its own
-  `QProcess`.
-- **`MainWindow`**: a `QTabWidget` holding the Convert form and a
-  `CombinePanel`.
+Given SPEC file `<beam>/<name>`:
 
-### 3. `main()`
+- **Scan root**: `<beam>/raw6M/<name>` if it exists, else `<beam>`.
+- **Aux tree**: walking up the path, the first component `X` for which the
+  same path with `Xaux` exists. On the server that turns `id4b` into
+  `id4baux`.
+- **Calibrations**: `<aux>/calibrations`, else `<beam>/calibrations`. `.poni`
+  and `.edf` files are listed newest first; masks with "mask" in the name go
+  before other `.edf` files. The first of each is the default.
+- **Output**: `<aux>/processed/output-epiq`, else `<beam>/output`.
+- **Sibling SPEC files**: files in `<beam>` that have a `raw6M/<file>` folder.
 
-Creates the `QApplication`, checks that `epiq_map.hkl_convert` imports (and
-shows a dialog instead of a traceback if not), and shows the window.
+### SPEC parsing
 
-## Convert tab: state and flow
+`read_spec` reads `#S` (number, macro, motor, start, end), `#D`, `#O` (motor
+names, split on two or more spaces because names can contain one space), `#P`
+(positions) and counts data lines as `points`. If a scan number repeats, the
+first is kept, as EpiQ-Map's `make_log_files` does.
 
-`MainWindow.scan` is either `None` or a dict:
+It was checked against `spec2nexus` (which `auto_rsm` uses) on two real SPEC
+files, 80 scans: `th`, `chi`, `phi`, `tth` and the point counts all match, and
+the scanned motor matches `make_log_files.get_scan_motor`.
+
+### What counts as a scan
+
+A folder named `<name>_<NNN>` whose number is in the SPEC file. Alignment
+scans have no folder and do not appear. `motor == "th"` makes a theta scan;
+anything else is processed as a phi scan. Both are EpiQ-Map's rules.
+
+Sample and temperature come from the path when the folder is three levels
+below the scan root (`<sample>/<T>/<scan>`). Only for a flat copy does the app
+open the scan folder, to read them from the detector's `.log` file.
+
+### Speed
+
+Loading never opens a scan folder in the standard layout, so it costs one
+read of the SPEC file, a few directory listings, and one listing of
+`transformed_objects`. Images are counted only when a conversion is
+requested.
+
+## app.py
+
+- **`PathPicker`**: editable combo box plus **Choose…**. `changed` fires on
+  any change, `edited` only for a change made by the user. `path()` is the
+  committed value; `commit()` takes pending typed text.
+- **`MainWindow`**: form, table, action bar, and the queue.
+
+### Rows
+
+Each row is the dict from `load_scans` plus GUI state:
 
 ```python
-{"path", "material", "number", "frames", "sample", "temperature", "motor"}
+state      ""  | "queued" | "running" | "failed"
+note       failure text
+percent    progress while running
+converted  bool, from output_state
+combined   list of scan-number tuples, from output_state
 ```
 
-- `_folder_changed` rebuilds it whenever the scan-folder box changes, and
-  sets `self.problem` to a sentence when the folder is unusable.
-- `_refresh` re-reads the motor from the SPEC file, updates the grey summary
-  line, and sets the one-line message (`Ready to convert`,
-  `Already converted ✓`, or what is missing). It is connected to every
-  picker's `changed` signal and returns early while a process is running.
-- `convert_clicked` is both Convert and Stop. As Convert it validates,
-  asks before replacing an existing file (`confirm_replace`), writes the
-  config, deletes `._*.cbf` files, and starts the `QProcess`.
-- `_read_output` → `_handle_line` consumes the child's output.
-- `_process_finished` decides success, swaps or cleans files, and reports.
+`_paint_row` turns that into status text, colour and the row button's label.
+`reload` rebuilds the rows; `check_outputs` only refreshes `converted` and
+`combined`. Both are refused while anything is running, because jobs hold
+references to row dicts.
 
-### The config that is written
+### The queue
 
-`build_config` reproduces the format of EpiQ-Map's
-`make_log_files.generate_log_content`:
+`self.jobs` is a list of dicts; `self.job` is the running one; `_pump` starts
+the next when no process is running. One process at a time, because each
+conversion needs many gigabytes.
 
-```
-PONI File: ...
-Material: BaRuO3
-Sample Name: TbScO3
-Scan Number: 21
-Scan List: [21]            # [] for a theta scan
-Theta Scan List: []        # [21] for a theta scan
-Temperature: 301           # omitted when not known
-Max Intensity: 100000.0
-Mask File: ...
-Specfile: ...
-Temperature Directory: <parent of the scan folder>/
-Image Directory: <scan folder>/
-Output Directory: ...
-```
+- Convert job: `{"kind": "convert", "row", "redo"}`
+- Combine job: `{"kind": "combine", "paths", "target", "label"}`
 
-It is saved as `<output>/logs/<Material>_<NNN>.txt` and overwritten on every
-run. No `UB`, lattice or range keys are written, which is what makes
-`auto_rsm` produce an unindexed lab-frame map in `transformed_objects/`.
+`request_convert(rows, single)` does the checks at click time: files present,
+images exist, images vs SPEC points, existing output. With `single=True` it
+may ask a question; in a batch it skips instead.
 
 ### Things `auto_rsm` does that the app depends on
 
-These are behaviours of EpiQ-Map 0.1.x. If they change, the app breaks.
+Behaviours of EpiQ-Map 0.1.x. If they change, the app breaks.
 
-1. **Image folder is derived, not read.** `auto_rsm` ignores
-   `Image Directory` and opens
-   `<Temperature Directory>/<Material>_<scan:03d>/`. This is why the scan
-   folder must be named `<Material>_<NNN>` and why `Temperature Directory`
-   is set to its parent.
-2. **Scan type comes from the lists.** A scan in `Scan List` is processed as a
-   phi scan, one in `Theta Scan List` as a theta scan. The app picks the list
-   from the SPEC motor: `th` → theta, anything else → phi. This is the same
-   rule as `make_log_files`.
-3. **It never overwrites.** If the output exists it appends `_more` before
-   `.nxs`. The app does not predict the name; it reads the line
-   `Output file: <path>` that `auto_rsm` prints, and `Saved <path>` at the
-   end.
-4. **Progress is a tqdm bar** on stderr, refreshed with `\r`. The app merges
-   stdout and stderr, splits on `\r` and `\n`, and matches `TQDM_RE`.
-5. **Config parsing is strict.** Unknown keys raise, values are split on the
-   first `": "`, and `Temperature` must be an integer.
+1. **Image folder is derived.** `auto_rsm` ignores `Image Directory` and opens
+   `<Temperature Directory>/<Material>_<scan:03d>/`. `Temperature Directory`
+   is therefore the scan folder's parent.
+2. **It never overwrites.** If the output exists it appends `_more`. The app
+   reads the real path from the `Output file:` and `Saved` lines.
+3. **Progress is a tqdm bar** refreshed with `\r`; matched by `TQDM_RE`.
+4. **Config parsing is strict**: unknown keys raise, `Temperature` must be an
+   integer (it is omitted when the folder name is not a number).
 
 ### Redo and cleanup
 
-- If the target exists when Convert is pressed and the user agrees,
-  `redo_target` is set to it. `auto_rsm` writes `..._more.nxs`; on success
-  the app `os.replace`s it over `redo_target`.
-- Success requires exit code 0, a normal exit, a `Saved` line, and that file
-  existing.
-- On failure or Stop, the file named in `Output file:` is deleted unless it
-  is `redo_target`. Since `auto_rsm` only ever picks a name that did not
-  exist, that file can only be this run's partial output.
+- Redo: `auto_rsm` writes `..._more.nxs`; on success it is `os.replace`d over
+  the old file.
+- Convert failure or Stop: the file named in `Output file:` is deleted unless
+  it is the redo target. `auto_rsm` only picks unused names, so that file can
+  only be this run's.
+- Combine: written to `<target>.partial`, renamed on success, deleted
+  otherwise.
 
-### Sample name detection
+### Configs
 
-The detector writes `<scan>_000.log` into the scan folder, listing each image
-with the path it had at acquisition:
+Written to `<output>/logs/epiq-convert/<name>_<sample>_<NNN>.txt`. They are in
+a subfolder on purpose: `rsm_monitor` treats every `.txt` directly inside
+`<output>/logs` as one of its own datasets.
 
-```
-.../raw6M/<material>/<sample>/<temperature>//<Material>_<NNN>/<image>.cbf
-```
+### Combine rules
 
-`detect_sample_and_temperature` takes the two path components before the
-scan folder, provided the one before those equals the material. Anything
-else falls back to sample `sample` and no temperature. The sample name is
-sanitised (`/ \ :` and whitespace → `_`) because it goes into a file name
-and into a `Key: value` config line.
-
-### Output folder default
-
-The output box follows the scan folder (`<parent>/output`) until the user
-picks or types an output folder (`output_touched`), after which it is left
-alone.
-
-## Combine tab
-
-`CombinePanel` holds three `PathPicker`s. `paths()` returns two paths when
-the third box is empty, three otherwise.
-
-- `_problem()` validates: first two present, all exist, no duplicates.
-- `combined_name()` builds the output name. When every input matches
-  `<prefix>_scans_<numbers><rest>.nxs` with the same prefix it produces
-  `<prefix>_scans_<a>_<b>[_<c>]<rest>_combined.nxs`; otherwise
-  `<first stem>_combined.nxs`. The file goes next to the first input.
-- `combine_clicked` runs
-  `python -u combine_rsm.py <files> -o <target>.partial`. On success the
-  `.partial` file is renamed over the target; on failure or Stop it is
-  deleted. An existing combined file is therefore never damaged by a failed
-  run.
-- Progress comes from lines of the form `<done>/<total>` (`SLAB_RE`).
-- The file dialog starts in the folder of an already chosen file, else in
-  `<output>/transformed_objects` from the Convert tab (passed in as the
-  `start_folder` callable), else in the last folder used.
+Enabled for two or three converted scans of the same sample. Order is by scan
+number. Non-consecutive numbers, non-phi scans and different temperature
+folders produce a question, not a block.
 
 ## combine_rsm.py
 
-A script, not a module of functions: it parses arguments and does the work at
-import time. That is deliberate. It is the user's original analysis script
-with two changes only: inputs and output come from the command line, and the
-third file is optional. `cli.combine()` runs it with `runpy`, and the app runs
-it by file path (`COMBINE_SCRIPT`). Do not import it.
+A script that does its work at import time. It is the owner's analysis script
+with inputs taken from the command line and an optional third file. Run it
+(`runpy` or by path); do not import it.
 
-Algorithm, for inputs A, B and optional C on the same grid:
+For inputs A, B and optional C on the same grid:
 
-1. Open each file's `entry/data`, find the signal and axes from the NXdata
-   attributes.
-2. Build the max-projection of A and of B along axis 1, reading `chunk`
-   slices at a time. Zeros are treated as missing.
-3. Cross-correlate the two mean-subtracted projections with
-   `scipy.signal.fftconvolve`; the peak position gives an integer shift
-   `(d0, d2)` along axes 0 and 2.
-4. For each slab along axis 0: `nanmean` of A and shifted B, with NaN → 0.
-   If C is given, voxels still equal to 0 are filled from C's raw values. C is
-   not shifted.
-5. Write `entry/data/counts` (float32, gzip level 1, one chunk per axis-0
-   slice) and copy the axes from A.
-
-It reads `2 × chunk` slices at most, so memory use is small.
+1. Max-projections of A and B along axis 1, zeros treated as missing.
+2. Cross-correlate the mean-subtracted projections (`fftconvolve`); the peak
+   gives an integer shift along axes 0 and 2.
+3. Per slab: `nanmean` of A and shifted B, NaN → 0. If C is given, voxels
+   still 0 take C's value. C is not shifted.
+4. Write `entry/data/counts` (float32, gzip 1) and A's axes.
 
 ## Settings
 
-`QSettings("EpiQ", "Convert")`, stored by the OS (on macOS, a plist in
-`~/Library/Preferences`).
+`QSettings("EpiQ", "Convert")`.
 
 | Key | Meaning |
 |---|---|
-| `spec`, `poni`, `mask` | Last files used; restored only if they still exist |
-| `max_intensity` | Last "skip frames brighter than" value |
-| `last_dir` | Parent of the last scan folder, for the folder dialog |
-| `last_nxs_dir` | Folder of the last combine, for the file dialog |
-
-The scan folder and output folder are deliberately not restored, so a new
-session cannot silently write into a previous beamtime's folder.
-
-## Packaging
-
-- `pyproject.toml` uses setuptools with a `src/` layout.
-- `epiq-convert` is a GUI script, `epiq-combine` a console script.
-- Child processes are started with `sys.executable`, so they use the same
-  environment the app was installed in.
-- `setup.sh` is only a macOS convenience. The `.app` it writes is a folder
-  containing an `Info.plist` and a three-line shell launcher that runs
-  `python -m epiq_convert` from `~/.venvs/epiq-map` and logs to
-  `~/Library/Logs/EpiQ-Convert.log`.
+| `spec` | Last SPEC file; reopened at start if it exists |
+| `max_intensity` | Last "skip images brighter than" |
+| `manual` | JSON `{beamtime folder: {poni, mask, output}}` for hand-chosen paths |
